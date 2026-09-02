@@ -1,5 +1,7 @@
 # Ventilation Card
 
+![Preview](docs/preview.gif)
+
 A Home Assistant Lovelace card for a heat-recovery ventilation (HRV/ERV) unit. Vendor-neutral
 — works with any set of matching sensors.
 
