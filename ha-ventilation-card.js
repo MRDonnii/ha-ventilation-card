@@ -1,4 +1,4 @@
-const VERSION = "0.2.39";
+const VERSION = "0.2.43";
 
 const ENTITY_FIELDS = [
   ["outdoor_temperature", "Udeluft"], ["supply_temperature", "Indblæsning"],
@@ -14,6 +14,46 @@ const ENTITY_FIELDS = [
   ["afterheat_active", "Varmeflade aktiv"], ["water_flow", "Varmeflade fremløb"],
   ["water_return", "Varmeflade retur"], ["water_delta", "Varmeflade ΔT (beregnet hvis ikke sat)"]
 ];
+
+// Patches an existing DOM tree to match a freshly-built one in place,
+// instead of the caller replacing innerHTML wholesale. Used by _render()
+// once the card's *shape* (bypass/coil-visible/mobile/size) hasn't
+// changed since the last render -- only text/attribute values have --
+// so a routine sensor tick never destroys and recreates a single element.
+// That matters for two independent reasons: it stops the flow/fan
+// animations from visibly restarting every tick (previously masked with
+// an animation-delay recompute, which is why "style" is skipped below --
+// leaving it alone is what actually gives the animation continuity now,
+// the delay only ever needs to be set once, at first mount), and it stops
+// Safari from losing its scroll anchor over many focusable
+// (tabindex="0") elements being torn down and rebuilt under the user's
+// finger, which showed up as the page jumping to the top on every
+// update on iOS specifically.
+function morphNode(oldNode, newNode) {
+  if (newNode.nodeType === 3 || newNode.nodeType === 8) {
+    if (oldNode.nodeType !== newNode.nodeType) { oldNode.replaceWith(newNode.cloneNode()); return; }
+    if (oldNode.textContent !== newNode.textContent) oldNode.textContent = newNode.textContent;
+    return;
+  }
+  if (oldNode.nodeType !== 1 || oldNode.tagName !== newNode.tagName) { oldNode.replaceWith(newNode.cloneNode(true)); return; }
+  const oldAttrNames = Array.from(oldNode.attributes, (a) => a.name);
+  for (const name of oldAttrNames) {
+    if (name !== "style" && !newNode.hasAttribute(name)) oldNode.removeAttribute(name);
+  }
+  for (const attr of Array.from(newNode.attributes)) {
+    if (attr.name === "style") continue;
+    if (oldNode.getAttribute(attr.name) !== attr.value) oldNode.setAttribute(attr.name, attr.value);
+  }
+  const oldChildren = Array.from(oldNode.childNodes);
+  const newChildren = Array.from(newNode.childNodes);
+  const max = Math.max(oldChildren.length, newChildren.length);
+  for (let i = 0; i < max; i += 1) {
+    const oc = oldChildren[i], nc = newChildren[i];
+    if (!nc) { oc.remove(); continue; }
+    if (!oc) { oldNode.appendChild(nc.cloneNode(true)); continue; }
+    morphNode(oc, nc);
+  }
+}
 
 class HAVentilationCard extends HTMLElement {
   static getStubConfig() {
@@ -43,6 +83,8 @@ class HAVentilationCard extends HTMLElement {
     this._viewWidth = 440;
     this._resizeObserver = undefined;
     this._lastRecovery = undefined;
+    this._renderTimer = undefined;
+    this._pendingSignature = undefined;
   }
 
   connectedCallback() {
@@ -59,6 +101,8 @@ class HAVentilationCard extends HTMLElement {
   disconnectedCallback() {
     this._resizeObserver?.disconnect();
     this._resizeObserver = undefined;
+    clearTimeout(this._renderTimer);
+    this._renderTimer = undefined;
   }
 
   setConfig(config) {
@@ -78,7 +122,35 @@ class HAVentilationCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     const signature = JSON.stringify(Object.values(this._config.entities || {}).map(id => hass?.states?.[id]?.state));
-    if (signature !== this._signature) this._render(signature);
+    if (signature === this._signature && signature === this._pendingSignature) return;
+    // setConfig() renders once immediately with no entity data at all
+    // (this._signature stays "" until the first real hass tick) -- that
+    // render must never sit behind the throttle below, or the card shows
+    // its empty "--" placeholder for up to a second on every page load
+    // before anything real appears. Only real *updates* need coalescing.
+    if (this._signature === "") {
+      clearTimeout(this._renderTimer);
+      this._renderTimer = undefined;
+      this._pendingSignature = undefined;
+      this._render(signature);
+      return;
+    }
+    // With ~24 tracked entities (several of them fast-changing sensors:
+    // temperatures, fan speed, power draw) a full rebuild on every single
+    // state tick fires several times a second on a busy Dantherm setup --
+    // recreating the animated duct/fan SVG elements that often visibly
+    // restarts their flow animation, and is needless render churn besides.
+    // Coalescing bursts into one rebuild per second is imperceptible for a
+    // physical airflow/temperature display and keeps the animation (and
+    // everything else on the dashboard) smooth.
+    this._pendingSignature = signature;
+    if (this._renderTimer) return;
+    this._renderTimer = setTimeout(() => {
+      this._renderTimer = undefined;
+      const next = this._pendingSignature;
+      this._pendingSignature = undefined;
+      if (next !== this._signature) this._render(next);
+    }, 1000);
   }
 
   getCardSize() { return 10; }
@@ -237,11 +309,17 @@ class HAVentilationCard extends HTMLElement {
     const rpm = Number(this._state(rpmKey)?.state);
     const running = Number.isFinite(rpm) && rpm > 0;
     const duration = Math.max(3.6, Math.min(7.2, 8.1 - rpm / 650));
+    // Same phase-continuity trick as the fan-wind animation below: without
+    // it, every rebuild recreates these paths and their flow-march
+    // animation restarts from stroke-dashoffset:0, which reads as a visible
+    // stutter/reset on a card that rebuilds this often. Negative
+    // animation-delay resumes at the position it would already be at.
+    const phase = -((Date.now() / 1000) % duration);
     return `<g class="duct ${route} ${running ? "running" : ""}" style="--flow-duration:${duration}s">
       <path class="rim" d="${path}"/><path class="inner" d="${path}"/>
       ${this._temperatureLayers(route, path, temperatureStops)}
-      <path class="flow-stream glow" pathLength="100" d="${path}"/>
-      <path class="flow-stream pulse" pathLength="100" d="${path}"/>
+      <path class="flow-stream glow" pathLength="100" d="${path}" style="animation-delay:${phase}s"/>
+      <path class="flow-stream pulse" pathLength="100" d="${path}" style="animation-delay:${phase}s"/>
     </g>`;
   }
 
@@ -307,8 +385,16 @@ class HAVentilationCard extends HTMLElement {
     const coilX = (centerX + 50 + right) / 2;
     const alarmActive = this._on("alarm");
     const fanAnimationDelay = -((Date.now() / 1000) % 2.8);
+    // Everything below the current sensor readings (paths, transforms,
+    // viewBox) is driven entirely by these four -- unchanged between two
+    // renders means the new markup is byte-identical in *shape*, just
+    // different numbers/colors in the same slots, safe to morph in place
+    // instead of rebuilding. Changed means an actually different diagram
+    // (bypass open/closed swaps duct routing, coil show/hide, mobile
+    // breakpoint, or a real resize), which still gets a full rebuild.
+    const shapeKey = `${bypass}:${showAfterheatValues}:${mobile}:${viewWidth}`;
 
-    this.shadowRoot.innerHTML = `<style>${this._styles()}</style><style>${this._responsiveStyles()}</style><ha-card class="${bypass ? "bypass" : ""}">
+    const html = `<style>${this._styles()}</style><style>${this._responsiveStyles()}</style><ha-card class="${bypass ? "bypass" : ""}">
       <header><div><small>VENTILATION</small><h2>${this._escape(this._config.title)}</h2></div><span class="entity-hit" data-key="mode" tabindex="0">${this._escape(mode)}</span></header>
       <div class="body"><aside class="left">
         <div class="entity-hit ${bypass ? "info" : ""}" data-key="bypass" tabindex="0"><strong>${this._statusValue("bypass", "Åben", "Lukket")}</strong><small>Bypass</small></div>
@@ -334,7 +420,46 @@ class HAVentilationCard extends HTMLElement {
         ${this._temperature("outdoor_temperature", "Udeluft", 14, topTemperatureY, "start")}${this._temperature(bypass ? supplyKey : "extract_temperature", bypass ? "Indblæsning" : "Udsugning", viewWidth - 14, topTemperatureY, "end")}${this._temperature("exhaust_temperature", "Afkast", 14, bottomTemperatureY, "start")}${this._temperature(bypass ? "extract_temperature" : supplyKey, bypass ? "Udsugning" : "Indblæsning", viewWidth - 14, bottomTemperatureY, "end")}
       </svg></div><aside class="right"><div class="entity-hit" data-key="co2" tabindex="0"><strong>${this._number("co2")}</strong><small>CO₂ · ppm</small></div><div class="entity-hit" data-key="level" tabindex="0"><strong>${this._escape(level)}</strong><small>Ventilatortrin</small></div><div class="entity-hit" data-key="power" tabindex="0"><strong>${this._number("power", " W")}</strong><small>Effekt</small></div><div class="entity-hit" data-key="filter_days" tabindex="0"><strong>${this._number("filter_days", " d")}</strong><small>Filter tilbage</small></div></aside></div>
     </ha-card>`;
-    this._bindMoreInfo();
+
+    if (this._shapeKey !== shapeKey || !this.shadowRoot.firstElementChild) {
+      this._shapeKey = shapeKey;
+      this.shadowRoot.innerHTML = html;
+      this._bindMoreInfo();
+    } else {
+      const runningBefore = this.shadowRoot.querySelectorAll(".running, .active").length;
+      const template = document.createElement("template");
+      template.innerHTML = html;
+      const oldNodes = Array.from(this.shadowRoot.childNodes);
+      const newNodes = Array.from(template.content.childNodes);
+      const max = Math.max(oldNodes.length, newNodes.length);
+      for (let i = 0; i < max; i += 1) {
+        const oldNode = oldNodes[i], newNode = newNodes[i];
+        if (!newNode) { oldNode.remove(); continue; }
+        if (!oldNode) { this.shadowRoot.appendChild(newNode.cloneNode(true)); continue; }
+        morphNode(oldNode, newNode);
+      }
+      // Existing nodes keep their already-wired more-info listeners; only a
+      // full rebuild above needs a fresh _bindMoreInfo() pass.
+      // Some WebKit versions don't reliably *start* a CSS animation whose
+      // triggering class (duct/fan "running"/coil "active") was just added
+      // via setAttribute to an already-connected element -- a full rebuild
+      // never hits this since the class is already present when the node
+      // is first created. A synchronous offsetWidth read here would force
+      // it immediately, but that forced layout flush turned out to be
+      // exactly disruptive enough to bring back Safari's scroll-to-top
+      // (reported after adding it) -- competing with the scroll compositor
+      // mid-gesture is the same class of problem the DOM-morphing above
+      // was fixing in the first place, just from a different cause.
+      // requestAnimationFrame runs right before the browser's own next
+      // layout/paint anyway, so nudging it there is effectively free
+      // instead of forced -- and only worth doing at all the rare moments
+      // something actually *starts* animating (a fan/coil turning on),
+      // not on every routine value tick, which is what running/active
+      // element counts before vs. after are checked for.
+      if (this.shadowRoot.querySelectorAll(".running, .active").length > runningBefore) {
+        requestAnimationFrame(() => { void this.offsetWidth; });
+      }
+    }
   }
 
   _styles() {
