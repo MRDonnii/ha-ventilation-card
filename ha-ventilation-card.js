@@ -1,4 +1,4 @@
-const VERSION = "0.2.43";
+const VERSION = "0.2.44";
 
 const ENTITY_FIELDS = [
   ["outdoor_temperature", "Udeluft"], ["supply_temperature", "Indblæsning"],
@@ -386,13 +386,25 @@ class HAVentilationCard extends HTMLElement {
     const alarmActive = this._on("alarm");
     const fanAnimationDelay = -((Date.now() / 1000) % 2.8);
     // Everything below the current sensor readings (paths, transforms,
-    // viewBox) is driven entirely by these four -- unchanged between two
+    // viewBox) is driven entirely by these -- unchanged between two
     // renders means the new markup is byte-identical in *shape*, just
     // different numbers/colors in the same slots, safe to morph in place
     // instead of rebuilding. Changed means an actually different diagram
     // (bypass open/closed swaps duct routing, coil show/hide, mobile
-    // breakpoint, or a real resize), which still gets a full rebuild.
-    const shapeKey = `${bypass}:${showAfterheatValues}:${mobile}:${viewWidth}`;
+    // breakpoint, a real resize) -- or a fan/coil actually starting or
+    // stopping. That last one isn't a *shape* change in the geometric
+    // sense, but it's included deliberately: a freshly-added "running"/
+    // "active" class reliably starts its CSS animation only when the
+    // element carrying it is created with the class already present (a
+    // full rebuild), not when the class lands via setAttribute on an
+    // already-connected element (tried forcing that to work with a
+    // reflow, on- and off-thread; neither reliably started the animation
+    // on iOS Safari, and the synchronous version reintroduced the
+    // scroll-to-top this whole rewrite exists to fix). Fan/coil state
+    // changes a few times a day, not several times a second like every
+    // other value here, so routing just those through a full rebuild is
+    // a fair trade for animations that reliably work.
+    const shapeKey = `${bypass}:${showAfterheatValues}:${mobile}:${viewWidth}:${supplyRunning}:${extractRunning}:${heating}`;
 
     const html = `<style>${this._styles()}</style><style>${this._responsiveStyles()}</style><ha-card class="${bypass ? "bypass" : ""}">
       <header><div><small>VENTILATION</small><h2>${this._escape(this._config.title)}</h2></div><span class="entity-hit" data-key="mode" tabindex="0">${this._escape(mode)}</span></header>
@@ -426,7 +438,11 @@ class HAVentilationCard extends HTMLElement {
       this.shadowRoot.innerHTML = html;
       this._bindMoreInfo();
     } else {
-      const runningBefore = this.shadowRoot.querySelectorAll(".running, .active").length;
+      // shapeKey already covers every fan/coil running-state transition
+      // (see above), so reaching this branch means running/active classes
+      // are identical before and after -- nothing here needs to start or
+      // restart an animation, only patch values, so there is nothing to
+      // force a reflow for.
       const template = document.createElement("template");
       template.innerHTML = html;
       const oldNodes = Array.from(this.shadowRoot.childNodes);
@@ -440,25 +456,6 @@ class HAVentilationCard extends HTMLElement {
       }
       // Existing nodes keep their already-wired more-info listeners; only a
       // full rebuild above needs a fresh _bindMoreInfo() pass.
-      // Some WebKit versions don't reliably *start* a CSS animation whose
-      // triggering class (duct/fan "running"/coil "active") was just added
-      // via setAttribute to an already-connected element -- a full rebuild
-      // never hits this since the class is already present when the node
-      // is first created. A synchronous offsetWidth read here would force
-      // it immediately, but that forced layout flush turned out to be
-      // exactly disruptive enough to bring back Safari's scroll-to-top
-      // (reported after adding it) -- competing with the scroll compositor
-      // mid-gesture is the same class of problem the DOM-morphing above
-      // was fixing in the first place, just from a different cause.
-      // requestAnimationFrame runs right before the browser's own next
-      // layout/paint anyway, so nudging it there is effectively free
-      // instead of forced -- and only worth doing at all the rare moments
-      // something actually *starts* animating (a fan/coil turning on),
-      // not on every routine value tick, which is what running/active
-      // element counts before vs. after are checked for.
-      if (this.shadowRoot.querySelectorAll(".running, .active").length > runningBefore) {
-        requestAnimationFrame(() => { void this.offsetWidth; });
-      }
     }
   }
 
