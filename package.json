@@ -1,0 +1,24 @@
+{
+  "name": "ha-ventilation-card",
+  "version": "0.2.38",
+  "description": "Home Assistant Lovelace card for a heat-recovery ventilation (HRV/ERV) unit — house-diagram layout with animated airflow.",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MRDonnii/ha-ventilation-card.git"
+  },
+  "keywords": [
+    "home-assistant",
+    "home-assistant-card",
+    "custom-card",
+    "lovelace",
+    "lovelace-card",
+    "dashboard",
+    "ventilation",
+    "hrv",
+    "erv",
+    "heat-recovery"
+  ],
+  "author": "John Thorn Halle",
+  "license": "MIT"
+}
