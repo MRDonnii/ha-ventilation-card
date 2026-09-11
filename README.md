@@ -75,6 +75,37 @@ All `entities` keys are optional — any duct, label, or metric whose entity isn
 simply renders as `—`. If `water_delta` isn't set, it's calculated automatically from
 `water_flow` minus `water_return` where both are available.
 
+## Dantherm details card
+
+Version 0.3.0 also includes `custom:ha-ventilation-details-card`, a compact companion card
+for diagnostics and service data. It groups the existing entities into five stable internal
+tabs: **Overview**, **Fans**, **Afterheat**, **System**, and **History**. History uses two
+embedded `mini-graph-card` instances, and filter reset always asks for confirmation first.
+
+```yaml
+type: custom:ha-ventilation-details-card
+title: Dantherm details
+entities:
+  house_temperature: sensor.house_temperature
+  heat_recovery_status: sensor.heat_recovery_status
+  extract_control: sensor.extract_fan_control
+  supply_control: sensor.supply_fan_control
+  extract_speed: sensor.extract_fan_speed
+  supply_speed: sensor.supply_fan_speed
+  afterheat_setpoint: sensor.after_heater_setpoint
+  air_before_coil: sensor.air_before_heating_coil
+  air_after_coil: sensor.air_after_heating_coil
+  water_flow: sensor.heating_coil_flow_temperature
+  water_return: sensor.heating_coil_return_temperature
+  hac1_connection: binary_sensor.hac1_connection
+  rs485_traffic: binary_sensor.rs485_bus_traffic
+  rs485_frames: sensor.rs485_frames_per_minute
+  filter_reset: button.reset_filter_interval
+```
+
+All detail-card entity keys are optional. Missing values remain visible as `—`, so one card
+configuration can be reused across Dantherm installations with different sensor coverage.
+
 ## Configuration reference
 
 | Key | Description |
