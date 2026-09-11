@@ -1,6 +1,6 @@
 {
   "name": "ha-ventilation-card",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Home Assistant Lovelace card for a heat-recovery ventilation (HRV/ERV) unit — house-diagram layout with animated airflow.",
   "type": "module",
   "repository": {
