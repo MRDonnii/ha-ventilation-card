@@ -43,6 +43,7 @@ type: custom:ha-ventilation-card
 title: Ventilation
 animation: true
 show_afterheat: false
+show_history: false
 entities:
   outdoor_temperature: sensor.outdoor_temperature
   supply_temperature: sensor.supply_temperature
@@ -113,6 +114,7 @@ configuration can be reused across Dantherm installations with different sensor 
 | `title` | Card header text (default `Ventilation`) |
 | `animation` | Toggle the animated airflow (default `true`) |
 | `show_afterheat` | Toggle the electric/water heating-coil panel on the supply duct (default `false`) |
+| `show_history` | Embed temperature, CO₂ and heat-recovery graphs in the main card (default `false`) |
 | `entities.outdoor_temperature` / `supply_temperature` / `extract_temperature` / `exhaust_temperature` | The four airflow temperatures |
 | `entities.afterheat_after` | Air temperature measured downstream of the heating coil; used as the displayed supply temperature when `show_afterheat` is on and bypass is off |
 | `entities.supply_fan_rpm` / `extract_fan_rpm` | Fan speed in RPM — drives duct animation and running state |
