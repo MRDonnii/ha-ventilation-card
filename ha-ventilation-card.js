@@ -1,4 +1,4 @@
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 
 const ENTITY_FIELDS = [
   ["outdoor_temperature", "Udeluft"], ["supply_temperature", "Indblæsning"],
@@ -44,6 +44,7 @@ function morphNode(oldNode, newNode) {
     if (attr.name === "style") continue;
     if (oldNode.getAttribute(attr.name) !== attr.value) oldNode.setAttribute(attr.name, attr.value);
   }
+  if (oldNode.hasAttribute("data-preserve-children")) return;
   const oldChildren = Array.from(oldNode.childNodes);
   const newChildren = Array.from(newNode.childNodes);
   const max = Math.max(oldChildren.length, newChildren.length);
@@ -85,9 +86,12 @@ class HAVentilationCard extends HTMLElement {
     this._lastRecovery = undefined;
     this._renderTimer = undefined;
     this._pendingSignature = undefined;
+    this._historyCards = [];
+    this._historyMountId = 0;
   }
 
   connectedCallback() {
+    if (this._config.show_history === true && this._historyCards.length === 0) this._mountOverviewHistory();
     if (this._resizeObserver || typeof ResizeObserver === "undefined") return;
     this._resizeObserver = new ResizeObserver(() => {
       const next = this._responsiveViewWidth();
@@ -101,6 +105,7 @@ class HAVentilationCard extends HTMLElement {
   disconnectedCallback() {
     this._resizeObserver?.disconnect();
     this._resizeObserver = undefined;
+    this._historyMountId += 1;
     clearTimeout(this._renderTimer);
     this._renderTimer = undefined;
   }
@@ -111,6 +116,7 @@ class HAVentilationCard extends HTMLElement {
       title: "Ventilation",
       animation: true,
       show_afterheat: false,
+      show_history: false,
       entities: {},
       ...config,
       entities: { ...(config.entities || {}) }
@@ -121,6 +127,7 @@ class HAVentilationCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    this._historyCards.forEach(card => { card.hass = hass; });
     const signature = JSON.stringify(Object.values(this._config.entities || {}).map(id => hass?.states?.[id]?.state));
     if (signature === this._signature && signature === this._pendingSignature) return;
     // setConfig() renders once immediately with no entity data at all
@@ -341,6 +348,32 @@ class HAVentilationCard extends HTMLElement {
     });
   }
 
+  async _mountOverviewHistory() {
+    this._historyCards = [];
+    if (this._config.show_history !== true || !window.loadCardHelpers) return;
+    const mountId = ++this._historyMountId;
+    const helpers = await window.loadCardHelpers();
+    const definitions = {
+      temperatures: [
+        ["outdoor_temperature", "Ude", "#42a5f5"], ["supply_temperature", "Indblæsning", "#f59e0b"],
+        ["extract_temperature", "Udsugning", "#00bfa5"], ["exhaust_temperature", "Afkast", "#ab47bc"]
+      ],
+      co2: [["co2", "CO₂", "#22c55e"]],
+      recovery: [["heat_recovery", "Genvindingsgrad", "#26c6da"]]
+    };
+    for (const [name, series] of Object.entries(definitions)) {
+      if (mountId !== this._historyMountId) return;
+      const target = this.shadowRoot.querySelector(`[data-overview-history="${name}"]`);
+      const entities = series.map(([key, label, color]) => ({ entity: this._config.entities?.[key], name: label, color })).filter(item => item.entity);
+      if (!target || !entities.length) continue;
+      const card = await helpers.createCardElement({ type: "custom:mini-graph-card", entities, hours_to_show: 24, points_per_hour: 2, line_width: 3, height: 145, animate: false, hour24: true, show: { icon: false, name: false, state: true, legend: true, labels: false, points: false, fill: "fade" } });
+      if (mountId !== this._historyMountId || !target.isConnected) return;
+      card.hass = this._hass;
+      target.replaceChildren(card);
+      this._historyCards.push(card);
+    }
+  }
+
   _render(signature = "") {
     if (!this.shadowRoot) return;
     this._signature = signature;
@@ -404,9 +437,11 @@ class HAVentilationCard extends HTMLElement {
     // changes a few times a day, not several times a second like every
     // other value here, so routing just those through a full rebuild is
     // a fair trade for animations that reliably work.
-    const shapeKey = `${bypass}:${showAfterheatValues}:${mobile}:${viewWidth}:${supplyRunning}:${extractRunning}:${heating}`;
+    const shapeKey = `${bypass}:${showAfterheatValues}:${this._config.show_history === true}:${mobile}:${viewWidth}:${supplyRunning}:${extractRunning}:${heating}`;
 
-    const html = `<style>${this._styles()}</style><style>${this._responsiveStyles()}</style><ha-card class="${bypass ? "bypass" : ""}">
+    const history = this._config.show_history === true ? `<section class="overview-history" aria-label="Ventilationshistorik"><div class="history-heading"><div><small>HISTORIK</small><h3>Seneste 24 timer</h3></div><span>Live udvikling</span></div><div class="overview-history-grid"><div class="history-slot" data-preserve-children data-overview-history="temperatures"></div><div class="history-slot" data-preserve-children data-overview-history="co2"></div><div class="history-slot" data-preserve-children data-overview-history="recovery"></div></div></section>` : "";
+
+    const html = `<style>${this._styles()}</style><style>${this._responsiveStyles()}</style><ha-card class="${bypass ? "bypass " : ""}${this._config.show_history === true ? "with-history" : ""}">
       <header><div><small>VENTILATION</small><h2>${this._escape(this._config.title)}</h2></div><span class="entity-hit" data-key="mode" tabindex="0">${this._escape(mode)}</span></header>
       <div class="body"><aside class="left">
         <div class="entity-hit ${bypass ? "info" : ""}" data-key="bypass" tabindex="0"><strong>${this._statusValue("bypass", "Åben", "Lukket")}</strong><small>Bypass</small></div>
@@ -430,13 +465,14 @@ class HAVentilationCard extends HTMLElement {
         <g transform="translate(${86 * scaleX} ${bottom})"><g class="fan-wind extract ${extractRunning ? "running" : ""}" style="stroke:${this._temperatureColor("exhaust_temperature")};animation-delay:${fanAnimationDelay}s"><path d="M-11 -7 C-23 -7 -24 -14 -35 -14"/><path d="M-11 0 H-43"/><path d="M-11 7 C-23 7 -26 14 -37 14"/></g></g>
         ${showAfterheatValues ? `<g class="coil ${heating ? "active" : ""}" transform="translate(${coilX - 310} ${bottom - 170})"><text class="entity-hit" data-key="water_delta" tabindex="0" x="310" y="134" text-anchor="middle">ΔT ${delta}</text><rect class="glow" x="246" y="146" width="128" height="60" rx="11"/><rect class="face" x="248" y="148" width="124" height="56" rx="9"/><path d="M310 155 V197"/><g class="entity-hit" data-key="water_flow" tabindex="0"><text class="small" x="279" y="166" text-anchor="middle">Fremløb</text><text class="coil-value" x="279" y="191" text-anchor="middle">${this._number("water_flow", "°", 1)}</text></g><g class="entity-hit" data-key="water_return" tabindex="0"><text class="small" x="341" y="166" text-anchor="middle">Retur</text><text class="coil-value" x="341" y="191" text-anchor="middle">${this._number("water_return", "°", 1)}</text></g></g>` : ""}
         ${this._temperature("outdoor_temperature", "Udeluft", 14, topTemperatureY, "start")}${this._temperature(bypass ? supplyKey : "extract_temperature", bypass ? "Indblæsning" : "Udsugning", viewWidth - 14, topTemperatureY, "end")}${this._temperature("exhaust_temperature", "Afkast", 14, bottomTemperatureY, "start")}${this._temperature(bypass ? "extract_temperature" : supplyKey, bypass ? "Udsugning" : "Indblæsning", viewWidth - 14, bottomTemperatureY, "end")}
-      </svg></div><aside class="right"><div class="entity-hit" data-key="co2" tabindex="0"><strong>${this._number("co2")}</strong><small>CO₂ · ppm</small></div><div class="entity-hit" data-key="level" tabindex="0"><strong>${this._escape(level)}</strong><small>Ventilatortrin</small></div><div class="entity-hit" data-key="power" tabindex="0"><strong>${this._number("power", " W")}</strong><small>Effekt</small></div><div class="entity-hit" data-key="filter_days" tabindex="0"><strong>${this._number("filter_days", " d")}</strong><small>Filter tilbage</small></div></aside></div>
+      </svg></div><aside class="right"><div class="entity-hit" data-key="co2" tabindex="0"><strong>${this._number("co2")}</strong><small>CO₂ · ppm</small></div><div class="entity-hit" data-key="level" tabindex="0"><strong>${this._escape(level)}</strong><small>Ventilatortrin</small></div><div class="entity-hit" data-key="power" tabindex="0"><strong>${this._number("power", " W")}</strong><small>Effekt</small></div><div class="entity-hit" data-key="filter_days" tabindex="0"><strong>${this._number("filter_days", " d")}</strong><small>Filter tilbage</small></div></aside></div>${history}
     </ha-card>`;
 
     if (this._shapeKey !== shapeKey || !this.shadowRoot.firstElementChild) {
       this._shapeKey = shapeKey;
       this.shadowRoot.innerHTML = html;
       this._bindMoreInfo();
+      this._mountOverviewHistory();
     } else {
       // shapeKey already covers every fan/coil running-state transition
       // (see above), so reaching this branch means running/active classes
@@ -479,6 +515,15 @@ class HAVentilationCard extends HTMLElement {
         color: var(--vent-fg);
         border: 1px solid var(--vent-line);
       }
+      ha-card.with-history { min-height: 680px; }
+      .overview-history { margin-top: 10px; padding: 12px; border: 1px solid var(--vent-line); border-radius: 16px; background: color-mix(in srgb, var(--vent-bg) 94%, var(--vent-fg) 6%); }
+      .history-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+      .history-heading small { display: block; font-size: 9px; letter-spacing: .15em; color: var(--secondary-text-color); }
+      .history-heading h3 { margin: 2px 0 0; font-size: 17px; }
+      .history-heading > span { color: var(--success-color, #20e3a2); font-size: 10px; font-weight: 700; }
+      .overview-history-grid { display: grid; grid-template-columns: 1.65fr 1fr 1fr; gap: 8px; }
+      .history-slot { min-width: 0; min-height: 172px; overflow: hidden; border-radius: 13px; background: color-mix(in srgb, var(--vent-bg) 88%, var(--vent-fg) 12%); }
+      .history-slot > * { display: block; height: 100%; --ha-card-border-width: 0; --ha-card-box-shadow: none; --ha-card-background: transparent; }
       .temp .value, .climate-value, .coil .coil-value {
         fill: color-mix(in srgb, var(--vent-fg) 78%, var(--vent-bg));
       }
@@ -497,7 +542,7 @@ class HAVentilationCard extends HTMLElement {
       .entity-hit { cursor: pointer; }
       .entity-hit:focus-visible { outline: 2px solid var(--info-color, #4aa3ff); outline-offset: 2px; }
       @media (max-width: 700px) {
-        ha-card { min-height: 0; padding: 12px 10px; }
+        ha-card, ha-card.with-history { min-height: 0; padding: 12px 10px; }
         header { padding: 0 3px 6px; }
         header small { font-size: 11px; }
         h2 { font-size: 30px; }
@@ -531,6 +576,10 @@ class HAVentilationCard extends HTMLElement {
         .coil text { font-size: 15px; }
         .coil .small { font-size: 11px; }
         .coil .coil-value { font-size: 18px; }
+        .overview-history { margin-top: 8px; padding: 10px; }
+        .overview-history-grid { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+        .overview-history-grid::-webkit-scrollbar { display: none; }
+        .history-slot { flex: 0 0 84%; min-height: 165px; scroll-snap-align: start; }
       }
     `;
   }
@@ -547,6 +596,7 @@ class HAVentilationCardEditor extends HTMLElement {
       { name: "title", selector: { text: {} } },
       { name: "animation", selector: { boolean: {} } },
       { name: "show_afterheat", selector: { boolean: {} } },
+      { name: "show_history", label: "Vis historikgrafer i kortet", selector: { boolean: {} } },
       { type: "expandable", name: "entities", title: "Entiteter", schema: ENTITY_FIELDS.map(([name, label]) => ({ name, label, selector: { entity: {} } })) }
     ];
     this._form.computeLabel = s => s.label || s.name;
