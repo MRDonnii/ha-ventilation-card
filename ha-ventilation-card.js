@@ -1,4 +1,4 @@
-const VERSION = "0.3.3";
+const VERSION = "0.3.4";
 
 const ENTITY_FIELDS = [
   ["outdoor_temperature", "Udeluft"], ["supply_temperature", "Indblæsning"],
@@ -367,7 +367,7 @@ class HAVentilationCard extends HTMLElement {
       const entities = series.map(([key, label, color]) => ({ entity: this._config.entities?.[key], name: label, color })).filter(item => item.entity);
       if (!target || !entities.length) continue;
       const compact = name !== "temperatures";
-      const card = await helpers.createCardElement({ type: "custom:mini-graph-card", name: name === "temperatures" ? "Temperaturer" : name === "co2" ? "CO₂" : "Varmegenvinding", entities, hours_to_show: 24, points_per_hour: 2, line_width: 3, height: compact ? 82 : 165, font_size: 68, animate: false, hour24: true, show: { icon: false, name: true, state: true, legend: !compact, labels: false, points: false, fill: "fade" } });
+      const card = await helpers.createCardElement({ type: "custom:mini-graph-card", name: name === "temperatures" ? "Temperaturer" : name === "co2" ? "CO₂" : "Varmegenvinding", entities, hours_to_show: 24, points_per_hour: 2, line_width: 3, height: compact ? 82 : 165, font_size: 68, animate: false, hour24: true, show: { icon: false, name: true, state: true, legend: !compact, labels: false, points: false, fill: compact ? true : "fade" } });
       if (mountId !== this._historyMountId || !target.isConnected) return;
       card.hass = this._hass;
       target.replaceChildren(card);
