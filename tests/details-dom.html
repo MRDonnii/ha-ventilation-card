@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>Ventilation details DOM test</title>
+<script>
+customElements.define("ha-card",class extends HTMLElement{});customElements.define("ha-icon",class extends HTMLElement{});customElements.define("mock-graph",class extends HTMLElement{setConfig(c){this.config=c;}});
+window.loadCardHelpers=async()=>({createCardElement(c){const e=document.createElement("mock-graph");e.setConfig(c);return e;}});window.confirm=()=>false;
+</script><script src="../ha-ventilation-card.js"></script><body></body><script>
+;(async()=>{const entities={house_temperature:"sensor.house",heat_recovery_status:"sensor.recovery",hac1_connection:"binary_sensor.hac1",rs485_traffic:"binary_sensor.bus",extract_speed:"sensor.extract",supply_speed:"sensor.supply",air_before_coil:"sensor.air_before",air_after_coil:"sensor.air_after",filter_reset:"button.reset"};
+const card=document.createElement("ha-ventilation-details-card");card.setConfig({title:"Dantherm detaljer",entities});document.body.append(card);
+const hass={states:{"sensor.house":{state:"21.4",attributes:{unit_of_measurement:"°C"}},"sensor.recovery":{state:"good",attributes:{}},"binary_sensor.hac1":{state:"on",attributes:{}},"binary_sensor.bus":{state:"on",attributes:{}},"sensor.extract":{state:"2500",attributes:{unit_of_measurement:"rpm"}},"sensor.supply":{state:"2300",attributes:{unit_of_measurement:"rpm"}}},callService(){throw Error("unexpected service")}};
+card.hass=hass;const shell=card.shadowRoot.querySelector("ha-card"),value=card.shadowRoot.querySelector('[data-value="house_temperature"]');if(value.textContent!=="21,4 °C")throw Error("value failed");
+const fans=card.shadowRoot.querySelector('[data-tab="fans"]');fans.click();if(!card.shadowRoot.querySelector('[data-panel="fans"]').classList.contains("active"))throw Error("tab failed");
+hass.states["sensor.house"]={state:"21.8",attributes:{unit_of_measurement:"°C"}};card.hass=hass;if(card.shadowRoot.querySelector("ha-card")!==shell||value.textContent!=="21,8 °C"||!fans.classList.contains("active"))throw Error("DOM stability failed");
+await card._mountHistory();if(card.shadowRoot.querySelectorAll("mock-graph").length!==2)throw Error("history failed");document.documentElement.dataset.test="pass";})().catch(error=>{document.documentElement.dataset.test=`fail:${error.message}`;throw error;});
+</script>
