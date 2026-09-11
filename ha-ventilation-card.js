@@ -1,4 +1,4 @@
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 
 const ENTITY_FIELDS = [
   ["outdoor_temperature", "Udeluft"], ["supply_temperature", "Indblæsning"],
@@ -366,7 +366,8 @@ class HAVentilationCard extends HTMLElement {
       const target = this.shadowRoot.querySelector(`[data-overview-history="${name}"]`);
       const entities = series.map(([key, label, color]) => ({ entity: this._config.entities?.[key], name: label, color })).filter(item => item.entity);
       if (!target || !entities.length) continue;
-      const card = await helpers.createCardElement({ type: "custom:mini-graph-card", entities, hours_to_show: 24, points_per_hour: 2, line_width: 3, height: 145, animate: false, hour24: true, show: { icon: false, name: false, state: true, legend: true, labels: false, points: false, fill: "fade" } });
+      const compact = name !== "temperatures";
+      const card = await helpers.createCardElement({ type: "custom:mini-graph-card", name: name === "co2" ? "CO₂" : name === "recovery" ? "Varmegenvinding" : undefined, entities, hours_to_show: 24, points_per_hour: 2, line_width: 3, height: compact ? 58 : 145, font_size: compact ? 68 : 100, animate: false, hour24: true, show: { icon: false, name: compact, state: true, legend: !compact, labels: false, points: false, fill: "fade" } });
       if (mountId !== this._historyMountId || !target.isConnected) return;
       card.hass = this._hass;
       target.replaceChildren(card);
@@ -439,7 +440,7 @@ class HAVentilationCard extends HTMLElement {
     // a fair trade for animations that reliably work.
     const shapeKey = `${bypass}:${showAfterheatValues}:${this._config.show_history === true}:${mobile}:${viewWidth}:${supplyRunning}:${extractRunning}:${heating}`;
 
-    const history = this._config.show_history === true ? `<section class="overview-history" aria-label="Ventilationshistorik"><div class="history-heading"><div><small>HISTORIK</small><h3>Seneste 24 timer</h3></div><span>Live udvikling</span></div><div class="overview-history-grid"><div class="history-slot" data-preserve-children data-overview-history="temperatures"></div><div class="history-slot" data-preserve-children data-overview-history="co2"></div><div class="history-slot" data-preserve-children data-overview-history="recovery"></div></div></section>` : "";
+    const history = this._config.show_history === true ? `<section class="overview-history" aria-label="Ventilationshistorik"><div class="history-heading"><div><small>HISTORIK</small><h3>Seneste 24 timer</h3></div><span>Live udvikling</span></div><div class="overview-history-grid"><div class="history-slot wide" data-preserve-children data-overview-history="temperatures"></div><div class="history-slot compact" data-preserve-children data-overview-history="co2"></div><div class="history-slot compact" data-preserve-children data-overview-history="recovery"></div></div></section>` : "";
 
     const html = `<style>${this._styles()}</style><style>${this._responsiveStyles()}</style><ha-card class="${bypass ? "bypass " : ""}${this._config.show_history === true ? "with-history" : ""}">
       <header><div><small>VENTILATION</small><h2>${this._escape(this._config.title)}</h2></div><span class="entity-hit" data-key="mode" tabindex="0">${this._escape(mode)}</span></header>
@@ -521,8 +522,10 @@ class HAVentilationCard extends HTMLElement {
       .history-heading small { display: block; font-size: 9px; letter-spacing: .15em; color: var(--secondary-text-color); }
       .history-heading h3 { margin: 2px 0 0; font-size: 17px; }
       .history-heading > span { color: var(--success-color, #20e3a2); font-size: 10px; font-weight: 700; }
-      .overview-history-grid { display: grid; grid-template-columns: 1.65fr 1fr 1fr; gap: 8px; }
+      .overview-history-grid { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(250px, .85fr); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 8px; }
       .history-slot { min-width: 0; min-height: 172px; overflow: hidden; border-radius: 13px; background: color-mix(in srgb, var(--vent-bg) 88%, var(--vent-fg) 12%); }
+      .history-slot.wide { grid-row: 1 / span 2; min-height: 352px; }
+      .history-slot.compact { min-height: 172px; }
       .history-slot > * { display: block; height: 100%; --ha-card-border-width: 0; --ha-card-box-shadow: none; --ha-card-background: transparent; }
       .temp .value, .climate-value, .coil .coil-value {
         fill: color-mix(in srgb, var(--vent-fg) 78%, var(--vent-bg));
@@ -579,7 +582,7 @@ class HAVentilationCard extends HTMLElement {
         .overview-history { margin-top: 8px; padding: 10px; }
         .overview-history-grid { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
         .overview-history-grid::-webkit-scrollbar { display: none; }
-        .history-slot { flex: 0 0 84%; min-height: 165px; scroll-snap-align: start; }
+        .history-slot, .history-slot.wide, .history-slot.compact { flex: 0 0 84%; min-height: 165px; scroll-snap-align: start; }
       }
     `;
   }
